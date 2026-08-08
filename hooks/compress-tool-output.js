@@ -14,6 +14,7 @@ const { lastUserPromptText } = require("./lib/transcript");
 const { safeWriteFileSync } = require("./lib/safe-write");
 const { combineActions, buildRecord, recoveryGap, sizeGap, fieldGap, debugManifestPath, appendRecord } = require("./lib/transform-manifest");
 const sidecarStore = require("./lib/sidecar-store");
+const { sanitizeSessionId } = require("./lib/session-id");
 const { coreOff } = require("./lib/gate");
 
 const WATCHED_TOOLS = new Set(["Bash", "PowerShell", "Read", "Grep"]);
@@ -591,22 +592,28 @@ function compressGrep(content, relevanceTokens, fileLabel, decision, sessionId) 
   const summary = [...perFile.entries()]
     .filter(([, s]) => s.total > s.shown)
     .map(([file, s]) => `${file}: ${s.total} matches, ${s.shown} shown`);
-  // Written BEFORE the marker that names it, and only named when the write
-  // actually landed — a retrieval instruction pointing at a file that isn't
-  // there is worse than the re-run advice it replaced.
+  const markerNoPath =
+    `[hush hook: ${omitted} match lines omitted from this view; every matched file is counted below, and every warning/error-shaped match was kept. ` +
+    `Files on disk are unchanged — re-run with a narrower pattern or a path filter for the full list]`;
+  // Size-check the marker WITHOUT the pointer first: if the generic marker
+  // alone doesn't win, the rewrite is rejected before any I/O happens.
+  const candidate = [...kept, markerNoPath, ...summary].join("\n");
+  if (candidate.length >= content.length) return content;
+  // Written only AFTER the rewrite proved smaller — a sidecar parked for a
+  // rejected rewrite would be orphan I/O (and a trust artifact claiming
+  // recovery for output that never shipped). Written BEFORE the marker that
+  // names it, so a retrieval instruction never points at a file that isn't
+  // there.
   const saved = persistGrepMatches(content, sessionId);
   const marker = saved
     ? `[hush hook: ${omitted} match lines omitted from this view; every matched file is counted below, and every warning/error-shaped match was kept. ` +
       `The complete match list was saved to ${saved.replace(/\\/g, "/")} — Read that file for the omitted matches ` +
       `(offset/limit returns an exact slice). If it is gone, re-run the search.]`
-    : `[hush hook: ${omitted} match lines omitted from this view; every matched file is counted below, and every warning/error-shaped match was kept. ` +
-      `Files on disk are unchanged — re-run with a narrower pattern or a path filter for the full list]`;
+    : markerNoPath;
+  // The pointer string can tip a near-miss back over the line. When it does,
+  // the rewrite is rejected whole — the sidecar stays (session-owned, cleaned
+  // at SessionEnd) but is never claimed as a recovery location by the record.
   const out = [...kept, marker, ...summary].join("\n");
-  // razor: a rewrite rejected here leaves the persisted copy behind unread —
-  // bounded (it is this session's own directory, deleted at SessionEnd) and
-  // rare (the summary would have to be bigger than the whole match list).
-  // Upgrade path if it ever matters: size-check against the prospective path
-  // first, since the file name is a pure function of the content.
   if (out.length >= content.length) return content;
   if (decision) {
     decision.omitted = omitted;
@@ -1119,7 +1126,13 @@ const NOTE_TEXT =
 function claimSessionNote(sessionId, tmpDir) {
   if (typeof sessionId !== "string" || !sessionId) return false;
   try {
-    const notePath = path.join(tmpDir || os.tmpdir(), `hush-note-${sessionId}`);
+    // Same sessionId sanitization as every other hush temp path (see
+    // lib/session-id.js) — a traversal-shaped id must never resolve
+    // outside tmpdir, mirroring postcompact-rearm.js's insideTmp check.
+    const safeSessionId = sanitizeSessionId(sessionId);
+    const notePath = path.join(tmpDir || os.tmpdir(), `hush-note-${safeSessionId}`);
+    const root = path.resolve(tmpDir || os.tmpdir()) + path.sep;
+    if (!path.resolve(notePath).startsWith(root)) return false;
     // Refuse a pre-planted symlink at the sentinel path before wx even tries
     // it — same residual-defense posture as safe-write's lstat gate.
     try {
@@ -1268,13 +1281,12 @@ function main() {
     let linesIn = 0;
     let omitted = 0;
     const actions = [];
-    // One record for the whole response: the fields are summed, and a sidecar
-    // written for one of them is the recovery location the record names.
-    // razor: with two sidecar-sized fields the record names the last one —
-    // every digest still carries its own file pointer inline, so nothing is
-    // unreachable; a per-field record list is ROADMAP 165's call, not this
-    // one's, since it changes the one-line-per-tool-output shape.
+    // One record for the whole response: the fields are summed, and every
+    // sidecar written across the fields is a recovery location the record
+    // names — a response with two parked fields registers both, not "the
+    // last one". Each digest still carries its own file pointer inline.
     const combined = {};
+    const recoveryPaths = [];
     for (const field of ["stdout", "stderr", "output"]) {
       if (typeof next[field] === "string") {
         bytesIn += next[field].length;
@@ -1286,7 +1298,8 @@ function main() {
         bytesOut += out.length;
         linesIn += decision.linesIn || 0;
         omitted += decision.omitted || 0;
-        if (decision.recovery === "sidecar") {
+        if (decision.recovery === "sidecar" && decision.recoveryPath) {
+          recoveryPaths.push({ field, path: decision.recoveryPath });
           combined.recovery = "sidecar";
           combined.recoveryPath = decision.recoveryPath;
           combined.retention = decision.retention;
@@ -1300,7 +1313,7 @@ function main() {
     if (changed) updated = next;
     if (actions.length) {
       return deliver(
-        { ...combined, bytesIn, bytesOut, linesIn, omitted, action: combineActions(actions), recovery: combined.recovery || "rerun-command" },
+        { ...combined, bytesIn, bytesOut, linesIn, omitted, action: combineActions(actions), recovery: combined.recovery || "rerun-command", recoveryPaths },
         updated,
         data
       );
