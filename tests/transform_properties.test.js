@@ -664,7 +664,7 @@ describe('pinned: narrow edges of the current transforms', () => {
     assert.strictEqual(looksLikeFailure('an error occurred'), true);
   });
 
-  test('a grep rewrite rejected for size leaves the copy it already wrote on disk', () => {
+  test('a grep rewrite rejected for size leaves no stray copy behind', () => {
     // Many files, four short matches each: three shown, one omitted, and the
     // per-file summary line costs more than the one line it stands for.
     const content = Array.from({ length: 480 }, (_, i) => {
@@ -675,23 +675,28 @@ describe('pinned: narrow edges of the current transforms', () => {
     const out = compressGrep(content, [], 'src', d, SIDECAR_SESSION);
     assert.strictEqual(out, content, 'the rewrite was not rejected — pick a shape whose summary really is bigger');
     assert.strictEqual(d.recovery, undefined, 'a rejected rewrite records no recovery location');
-    const parked = fs.readdirSync(sidecarStore.sessionDir(SIDECAR_SESSION));
-    assert.strictEqual(parked.length, 1, 'the copy written before the size check is left behind');
+    const dir = sidecarStore.sessionDir(SIDECAR_SESSION);
+    const parked = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    assert.strictEqual(parked.length, 0, 'a rewrite rejected for size must not have parked a copy it will never point at');
   });
 
-  test('a session id shaped like a path traversal writes outside the directory it was given', () => {
+  test('a session id shaped like a path traversal is sanitized before it reaches any path', () => {
     const home = path.join(SCRATCH, 'note-home');
     fs.mkdirSync(home, { recursive: true });
     const sessionId = '../../../escaped';
-    const notePath = path.join(home, `hush-note-${sessionId}`);
-    assert.ok(path.relative(home, notePath).startsWith('..'), 'the id has to resolve outside for this pin to mean anything');
+    const rawNotePath = path.join(home, `hush-note-${sessionId}`);
+    assert.ok(path.relative(home, rawNotePath).startsWith('..'), 'the id has to resolve outside for this pin to mean anything');
 
     assert.strictEqual(claimSessionNote(sessionId, home), true);
 
-    // Pinned as it is: the id goes into the file name raw, so the sentinel
-    // lands wherever the traversal points. Bounded — the file is empty and
-    // still `hush-note-`-shaped — and here it stays inside the scratch tree.
-    assert.strictEqual(fs.readFileSync(notePath, 'utf-8'), '');
-    assert.ok(path.resolve(notePath).startsWith(path.resolve(SCRATCH)), 'the pin must not write outside its own scratch tree');
+    // Sanitized as it is: the traversal-shaped id becomes a filesystem-safe
+    // token, the sentinel lands INSIDE the directory it was given, and the
+    // traversal target was never touched.
+    assert.ok(!fs.existsSync(path.resolve(home, '..', '..', '..', 'escaped')), 'nothing was written at the traversal target');
+    const safeName = fs.readdirSync(home).find((n) => n.startsWith('hush-note-'));
+    assert.ok(safeName, 'the sanitized sentinel exists inside the given directory');
+    assert.strictEqual(fs.readFileSync(path.join(home, safeName), 'utf-8'), '');
+    assert.ok(!safeName.includes('/'), 'no path separator survives into the sentinel name');
+    assert.ok(!safeName.includes('..'), 'no parent traversal survives into the sentinel name');
   });
 });

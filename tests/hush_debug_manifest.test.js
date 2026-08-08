@@ -38,7 +38,7 @@ function readManifest(sessionId) {
   return fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
-const uniqueLines = (n) => Array.from({ length: n }, (_, i) => `line ${i} of the fixture, unique content`).join('\n');
+const uniqueLines = (n, prefix = 'line') => Array.from({ length: n }, (_, i) => `${prefix} ${i} of the fixture, unique content`).join('\n');
 
 describe('HUSH_DEBUG manifest: gate', () => {
   test('off by default — no manifest file at all', () => {
@@ -281,7 +281,7 @@ describe('Probe 9 Spec 2: adversarial no-op fixtures', () => {
 describe('transform manifest: the record contract', () => {
   const RECORD_KEYS = [
     'action', 'bytesIn', 'bytesOut', 'fallback', 'linesIn', 'omitted',
-    'preserved', 'recovery', 'recoveryPath', 'retention', 'retrieval', 'session', 'tool',
+    'preserved', 'recovery', 'recoveryPath', 'recoveryPaths', 'retention', 'retrieval', 'session', 'tool',
   ];
   function only(id) {
     const entries = readManifest(id);
@@ -402,6 +402,25 @@ describe('transform manifest: the record contract', () => {
     const e = only(id);
     assert.strictEqual(e.action, 'shell-guard-skip');
     assert.match(e.fallback, /truncated by the host/);
+  });
+
+  test('multi-field — every parked field is a recovery location, not just the last', () => {
+    const id = sid('rec-multifield');
+    const stdout = uniqueLines(400, 'OUT-');
+    const stderr = uniqueLines(400, 'ERR-');
+    runHook('compress-tool-output.js', {
+      tool_name: 'Bash', session_id: id,
+      tool_response: { exitCode: 1, stdout, stderr },
+    }, { HUSH_DEBUG: '1' });
+    const e = only(id);
+    assert.strictEqual(e.recovery, 'sidecar');
+    assert.ok(Array.isArray(e.recoveryPaths), 'the collection exists');
+    assert.strictEqual(e.recoveryPaths.length, 2, 'both fields parked a copy, both are named');
+    assert.strictEqual(e.recoveryPaths.length, new Set(e.recoveryPaths.map((p) => p.path)).size, 'the two fields park two distinct files');
+    assert.ok(e.recoveryPaths.every((p) => p.path), 'each entry names the field it came from');
+    assert.strictEqual(new Set(e.recoveryPaths.map((p) => p.field)).size, 2, 'the two fields both appear');
+    assert.ok(e.recoveryPaths.every((p) => fs.existsSync(p.path) && fs.readFileSync(p.path, 'utf8').length > 0), 'each named location really holds a full field');
+    assert.strictEqual(e.recoveryPath, e.recoveryPaths[e.recoveryPaths.length - 1].path, 'the legacy single field still names the last one');
   });
 
   test('a capped log read points back at the file it read', () => {
