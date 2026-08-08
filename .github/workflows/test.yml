@@ -8,7 +8,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -16,10 +20,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: run tests (no-op if this plugin has no tests/ directory)
-        run: |
-          if [ -d tests ]; then
-            node --test tests/*.test.js
-          else
-            echo "no tests/ directory, nothing to run"
-          fi
+      # The plugin's tests/ directory is a hard requirement: losing it fails
+      # the build, it never silently "passes". The glob is quoted so the
+      # runner's shell (pwsh on Windows) does not try to expand it.
+      - name: run tests
+        shell: bash
+        run: node --test "tests/*.test.js"
