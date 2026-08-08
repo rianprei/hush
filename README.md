@@ -137,13 +137,27 @@ Every trim happens locally as Claude works — read the plugin's files if you wa
 
 Most people never touch these. The day-to-day ones:
 
-| Variable | What it does |
-| --- | --- |
-| `HUSH_DISABLE=1` | Stops every hook — no compression, no reminders, no files written. The output style is a separate switch: run `/hush:pick-style` to hand the slot back to stock, or uninstall |
-| `HUSH_DEBUG=1` | Writes a local record of what hush did to each tool output — sizes in and out, and where the full copy went |
-| `HUSH_NUDGE=turn` | The spend dial. Keeps one quiet reminder at the start of each turn and drops the mid-turn ones. Costs the same as no plugin, and stays far quieter than no plugin — the default is quieter still, at a premium on long sessions that resume |
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `HUSH_DISABLE=1` | off | Stops every hook — no compression, no reminders, no files written. The output style is a separate switch: run `/hush:pick-style` to hand the slot back to stock, or uninstall |
+| `HUSH_DEBUG=1` | off | Writes a local record of what hush did to each tool output — sizes in and out, and where the full copy went |
+| `HUSH_NUDGE=turn` | nudge | The spend dial. `turn` keeps one quiet reminder at the start of each turn and drops the mid-turn ones — the same spend as no plugin; `off` disables the nudge entirely |
+| `HUSH_GREP=off` | on | Turns the grep collapse (omitted match lines + saved sidecar) into a plain passthrough |
+| `HUSH_SIDECAR=off` | on | Never parks full copies on disk; collapsed output falls back to re-run instructions instead |
+| `HUSH_NOTE=off` | on | Stops the one-per-session "hush is active" harness note |
+| `HUSH_SUBAGENT=off` | on | Stops the subagent brief from being added to subagent prompts |
+| `HUSH_COMPACT=off` | on | Stops the pre-compaction summary from being attached before compaction |
+| `HUSH_CORE=off` | core on | Switches the core surface (tool-output compression, exit-code preservation) off |
+| `HUSH_QUIET=off` | on | Switches the quiet surface (nudge + subagent brief) off |
+| `HUSH_ADAPTIVE=off` | on | Disables the adaptive-intensity engine (per-tool intensity hints) |
+| `HUSH_WRAP=1` | off | Lets hush trim failing commands too (see the callout under [How it works](#how-it-works)) |
+| `HUSH_CAP_PASS` | `60` | Max lines kept for a passing command's output |
+| `HUSH_CAP_FAIL` | `250` | Max lines kept for a failing command's output |
+| `HUSH_SIDECAR_MIN` | `15000` | Chars below which unread output is trimmed inline instead of parked as a sidecar |
+| `HUSH_SIDECAR_SHELL_MAX` | `28000` | Chars above which a shell output the host may truncate is capped inline instead of parked |
+| `HUSH_TEMPLATE=off` | on | Disables error-line preservation from the failure template |
 
-`HUSH_WRAP=1` is a situational switch — it lets hush trim failing commands too; see the callout under [How it works](#how-it-works).
+The two dials nobody needs but are there anyway: `HUSH_MARKER_RE` (the marker shape the hooks recognize) and `HUSH_CORE`/`HUSH_QUIET`'s `off`.
 
 There are no compression levels and no profiles — the trimming is one policy.
 
