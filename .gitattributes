@@ -1,0 +1,5 @@
+# The verifier's anchors and the manifest contract are byte-exact about LINE
+# endings (regexes anchor on "\n" and the canonical style is split on it).
+# Windows checkouts must not convert to CRLF or every style test fails on
+# windows-latest. Force LF on checkout for all text files.
+* text=auto eol=lf
