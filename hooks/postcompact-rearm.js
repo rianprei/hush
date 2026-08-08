@@ -18,6 +18,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { coreOff } = require("./lib/gate");
+const { sanitizeSessionId } = require("./lib/session-id");
 
 function readInput() {
   let raw;
@@ -49,7 +50,7 @@ function insideTmp(p) {
 }
 
 function unlinkSentinels(sessionId) {
-  const notePath = path.join(os.tmpdir(), `hush-note-${sessionId}`);
+  const notePath = path.join(os.tmpdir(), `hush-note-${sanitizeSessionId(sessionId)}`);
   if (!insideTmp(notePath)) return;
   try {
     fs.unlinkSync(notePath);

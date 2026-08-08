@@ -23,25 +23,26 @@
 // Every function here is fail-open: a missing directory is a no-op, and no
 // failure is worth raising into a hook.
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { sanitizeSessionId } = require("./session-id");
 
-const SIDECAR_ROOT = path.join(os.tmpdir(), 'hush-sidecar');
+const SIDECAR_ROOT = path.join(os.tmpdir(), "hush-sidecar");
 
 // Crash leftovers are only distinguishable from live files by age. A day is
 // long enough that no plausible session loses a file it still points at.
 const STALE_MS = 24 * 60 * 60 * 1000;
 
-// The sessionId sanitization every hush temp path shares — the id
-// becomes a single path segment, so anything that isn't [A-Za-z0-9-] (path
-// separators and traversal included) is flattened to an underscore.
-// win32 folds the case: `ABCD1234` and `abcd1234` are one directory on NTFS,
-// so distinct-case ids have to resolve to the same name here too — otherwise a
-// cleanup for one id deletes the other's live files.
+// The session directory is one path segment per session — sanitization shared
+// with every other hush temp path, so claiming (compress-tool-output.js),
+// listing (precompact-summary.js) and cleanup (this module) land on the same
+// name. win32 folds the case: `ABCD1234` and `abcd1234` are one directory on
+// NTFS, so distinct-case ids have to resolve to the same name here too —
+// otherwise a cleanup for one id deletes the other's live files.
 function sessionDir(sessionId) {
-  const safe = String(sessionId || 'unknown').replace(/[^a-zA-Z0-9-]/g, '_');
-  return path.join(SIDECAR_ROOT, process.platform === 'win32' ? safe.toLowerCase() : safe);
+  const safe = sanitizeSessionId(sessionId);
+  return path.join(SIDECAR_ROOT, process.platform === "win32" ? safe.toLowerCase() : safe);
 }
 
 // True for any file under the sidecar root at any depth: a session directory

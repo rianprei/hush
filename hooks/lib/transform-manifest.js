@@ -21,6 +21,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { sanitizeSessionId } = require('./session-id');
 
 // The action taxonomy. `lossy` means the view this action produces can leave
 // input lines out of itself, which is exactly the set recoveryGap polices;
@@ -80,7 +81,18 @@ function buildRecord(d) {
     preserved: linesIn - omitted,
     omitted,
     recovery: d.recovery || null,
+    // `recoveryPath` (legacy single) and `recoveryPaths` (collection) both
+    // come out of the same source: a record always carries the collection,
+    // and the legacy field is kept for consumers that predate it. A
+    // multi-field response (stdout + stderr + output) can name several
+    // recovery locations — one per field — and the collection is where all
+    // of them are recorded instead of "the last field wins".
     recoveryPath: d.recoveryPath || null,
+    recoveryPaths: Array.isArray(d.recoveryPaths)
+      ? d.recoveryPaths
+      : d.recoveryPath
+        ? [d.recoveryPath]
+        : [],
     // "session": the file lives in a directory the naming session owns and is
     // deleted when that session ends (see hooks/lib/sidecar-store.js).
     // "none": nothing was persisted, so nothing has to be cleaned up.
@@ -102,13 +114,18 @@ function buildRecord(d) {
 
 // Invariant: a lossy transform without a retrievable full original is
 // rejected. A lossy action that happened to drop nothing this time (a cap
-// under its own limit) has nothing to recover and passes.
+// under its own limit) has nothing to recover and passes. The legacy single
+// path and the collection are honored; a record that names a recovery
+// location with neither is rejected.
 function recoveryGap(record) {
   const spec = ACTIONS[record.action];
   if (!spec || !spec.lossy || record.omitted <= 0) return null;
   if (!record.recovery) return `${record.action} omitted ${record.omitted} lines with no recovery location`;
-  if ((record.recovery === 'sidecar' || record.recovery === 'source-file') && !record.recoveryPath) {
-    return `${record.action} names ${record.recovery} recovery with no path`;
+  if (record.recovery === "sidecar" || record.recovery === "source-file") {
+    const hasPath =
+      !!record.recoveryPath ||
+      (Array.isArray(record.recoveryPaths) && record.recoveryPaths.length > 0);
+    if (!hasPath) return `${record.action} names ${record.recovery} recovery with no path`;
   }
   return null;
 }
@@ -155,7 +172,7 @@ function fieldGap(original, updated) {
 
 // The sessionId sanitization every hush temp path shares.
 function debugManifestPath(sessionId) {
-  const safe = String(sessionId || 'unknown').replace(/[^a-zA-Z0-9-]/g, '_');
+  const safe = sanitizeSessionId(sessionId);
   return path.join(os.tmpdir(), `hush-debug-${safe}.jsonl`);
 }
 
